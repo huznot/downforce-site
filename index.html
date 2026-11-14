@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#101418">
+  <title>Downforce</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    :root { --cream: #f3e6c8; --ink: #0d1114; --accent: #ff7a1a; --teal: #1f5f6b; }
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: var(--ink); }
+    body { font-family: 'Oswald', 'Arial Narrow', sans-serif; color: var(--cream); touch-action: none; -webkit-user-select: none; user-select: none; }
+    /* the game canvas always fills the window, whatever its aspect ratio; the in-game UI scales with it */
+    #unity-canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh; display: block; background: var(--ink); outline: none; }
+    #loader { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4vh;
+      background: linear-gradient(180deg, #16404a 0%, #3c5a5e 38%, #c9845a 78%, #e7a76a 100%); transition: opacity .6s ease; z-index: 5; }
+    #loader.done { opacity: 0; pointer-events: none; }
+    #loader svg.hills { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 34vh; }
+    #title { position: relative; font-weight: 700; font-size: clamp(48px, 12vw, 180px); letter-spacing: .04em; line-height: .9;
+      text-shadow: 0 6px 30px rgba(0,0,0,.25); }
+    #sub { position: relative; font-weight: 500; letter-spacing: .4em; font-size: clamp(11px, 1.4vw, 18px); opacity: .85; margin-top: -2vh; }
+    #bar { position: relative; width: min(420px, 70vw); height: 6px; background: rgba(13,17,20,.35); border-radius: 3px; overflow: hidden; }
+    #fill { width: 0%; height: 100%; background: var(--cream); transition: width .2s ease; }
+    #pct { position: relative; font-size: 14px; letter-spacing: .3em; opacity: .8; }
+    #err { position: relative; max-width: 80vw; text-align: center; font-size: 16px; color: #fff; background: rgba(150,20,10,.6); padding: 10px 16px; border-radius: 6px; display: none; }
+    #fs { position: fixed; right: 14px; bottom: 14px; z-index: 6; width: 44px; height: 44px; border: 0; border-radius: 8px; cursor: pointer;
+      background: rgba(13,17,20,.45); color: var(--cream); display: flex; align-items: center; justify-content: center; opacity: .55; transition: opacity .2s; }
+    #fs:hover { opacity: 1; }
+    #fs svg { width: 22px; height: 22px; }
+    #hint { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 6; font-size: 13px; letter-spacing: .25em; opacity: .7; pointer-events: none; transition: opacity 1s; }
+  </style>
+</head>
+<body>
+  <canvas id="unity-canvas" tabindex="-1"></canvas>
+
+  <div id="loader">
+    <svg class="hills" viewBox="0 0 1200 300" preserveAspectRatio="none" aria-hidden="true">
+      <path d="M0 170 C150 120 260 150 380 110 C520 60 640 140 760 120 C900 95 1020 40 1200 90 L1200 300 L0 300Z" fill="#7a5a4a" opacity=".55"/>
+      <path d="M0 220 C180 170 320 210 470 180 C620 150 760 200 900 175 C1040 150 1120 170 1200 160 L1200 300 L0 300Z" fill="#3d3a3d" opacity=".8"/>
+      <path d="M0 260 C200 240 420 255 600 245 C800 235 1000 255 1200 240 L1200 300 L0 300Z" fill="#0d1114"/>
+    </svg>
+    <div id="title">DOWNFORCE</div>
+    <div id="sub">WET RACE</div>
+    <div id="bar"><div id="fill"></div></div>
+    <div id="pct">LOADING 0%</div>
+    <div id="err"></div>
+  </div>
+
+  <button id="fs" title="Fullscreen (F11)" aria-label="Toggle fullscreen">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+  </button>
+  <div id="hint">CLICK FOR FULLSCREEN</div>
+
+  <script>
+    const canvas = document.getElementById('unity-canvas');
+    const fill = document.getElementById('fill'), pct = document.getElementById('pct'), err = document.getElementById('err');
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+    function goFullscreen() {
+      const el = document.documentElement;
+      const req = el.requestFullscreen || el.webkitRequestFullscreen;
+      if (!document.fullscreenElement && req) req.call(el).then(() => {
+        if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {});
+      }).catch(() => {});
+    }
+    document.getElementById('fs').addEventListener('click', () => {
+      if (document.fullscreenElement) document.exitFullscreen(); else goFullscreen();
+    });
+    // first click / tap anywhere goes fullscreen (browsers only allow it from a user gesture)
+    let askedFs = false;
+    window.addEventListener('pointerdown', () => {
+      if (askedFs) return; askedFs = true; goFullscreen();
+      document.getElementById('hint').style.opacity = 0;
+      canvas.focus();
+    }, { capture: true });
+    setTimeout(() => document.getElementById('hint').style.opacity = 0, 9000);
+    // optional frame-rate readout for testing: add ?fps to the URL
+    if (/[?&]fps/.test(location.search)) {
+      const f = document.createElement('div');
+      f.style.cssText = 'position:fixed;left:8px;top:8px;z-index:9;font:14px monospace;color:#0f0;background:#000a;padding:2px 6px';
+      document.body.appendChild(f);
+      let n = 0, t0 = performance.now();
+      (function tick(now) { n++; if (now - t0 >= 1000) { f.textContent = n + ' fps'; window.__fps = n; n = 0; t0 = now; } requestAnimationFrame(tick); })(t0);
+    }
+    // keep keyboard input in the game (space / arrows must not scroll the page)
+    window.addEventListener('keydown', e => { if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault(); }, { passive: false });
+
+    const config = {
+      dataUrl: "Build/Website.data.unityweb",
+      frameworkUrl: "Build/Website.framework.js.unityweb",
+      codeUrl: "Build/Website.wasm.unityweb",
+      streamingAssetsUrl: "StreamingAssets",
+      companyName: "OWR",
+      productName: "Downforce",
+      productVersion: "1.0.0",
+      // sharp on hi-dpi laptops without rendering 4x the pixels on a retina panel
+      devicePixelRatio: Math.min(window.devicePixelRatio || 1, isMobile ? 1.25 : 1.5),
+      matchWebGLToCanvasSize: true,
+    };
+
+    const script = document.createElement('script');
+    script.src = "Build/Website.loader.js";
+    script.onload = () => {
+      createUnityInstance(canvas, config, p => {
+        const v = Math.round(p * 100);
+        fill.style.width = v + '%'; pct.textContent = 'LOADING ' + v + '%';
+      }).then(instance => {
+        window.unityInstance = instance;
+        document.getElementById('loader').classList.add('done');
+        canvas.focus();
+      }).catch(message => {
+        err.style.display = 'block';
+        err.textContent = 'Could not start the game: ' + message + ' — try an up-to-date Chrome, Edge or Firefox.';
+      });
+    };
+    document.body.appendChild(script);
+  </script>
+</body>
+</html>
